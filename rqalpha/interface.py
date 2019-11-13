@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright 2017 Ricequant, Inc
+# Copyright 2019 Ricequant, Inc
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# * Commercial Usage: please contact public@ricequant.com
+# * Non-Commercial Usage:
+#     Licensed under the Apache License, Version 2.0 (the "License");
+#     you may not use this file except in compliance with the License.
+#     You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#         http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+#     Unless required by applicable law or agreed to in writing, software
+#     distributed under the License is distributed on an "AS IS" BASIS,
+#     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#     See the License for the specific language governing permissions and
+#     limitations under the License.
 import abc
 
 from six import with_metaclass
@@ -128,19 +129,6 @@ class AbstractAccount(with_metaclass(abc.ABCMeta)):
 
         返回当前账户的当日交易费用
         """
-        raise NotImplementedError
-
-
-class AbstractBookingPosition(with_metaclass(abc.ABCMeta)):
-
-    @property
-    @abc.abstractmethod
-    def order_book_id(self):
-        raise NotImplementedError
-
-    @property
-    @abc.abstractmethod
-    def direction(self):
         raise NotImplementedError
 
 
@@ -496,6 +484,14 @@ class AbstractDataSource(object):
         """
         raise NotImplementedError
 
+    def get_share_transformation(self, order_book_id):
+        """
+        获取股票转换信息
+        :param order_book_id: 合约代码
+        :return: (successor, conversion_ratio), (转换后的合约代码，换股倍率)
+        """
+        raise NotImplementedError
+
 
 class AbstractBroker(with_metaclass(abc.ABCMeta)):
     """
@@ -516,10 +512,6 @@ class AbstractBroker(with_metaclass(abc.ABCMeta)):
 
         :return: Portfolio
         """
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def get_booking(self):
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -604,6 +596,22 @@ class AbstractPersistProvider(with_metaclass(abc.ABCMeta)):
         """
         :param str key:
         :return: bytes 如果没有对应的值，返回 None
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def should_resume(self):
+        """
+        是否应该以 resume 模式运行
+        :return: bool
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def should_run_init(self):
+        """
+        是否应该执行策略的 init 函数
+        :return: bool
         """
         raise NotImplementedError
 

@@ -1,21 +1,26 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright 2017 Ricequant, Inc
+# Copyright 2019 Ricequant, Inc
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# * Commercial Usage: please contact public@ricequant.com
+# * Non-Commercial Usage:
+#     Licensed under the Apache License, Version 2.0 (the "License");
+#     you may not use this file except in compliance with the License.
+#     You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#         http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+#     Unless required by applicable law or agreed to in writing, software
+#     distributed under the License is distributed on an "AS IS" BASIS,
+#     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#     See the License for the specific language governing permissions and
+#     limitations under the License.
+
+from six import iteritems
 
 from rqalpha.events import EventBus
 from rqalpha.utils import get_account_type
+from rqalpha.const import FRONT_VALIDATOR_TYPE
 from rqalpha.utils.logger import system_log, user_log, user_detail_log
 from rqalpha.utils.i18n import gettext as _
 
@@ -42,7 +47,6 @@ class Environment(object):
         self.user_detail_log = user_detail_log
         self.event_bus = EventBus()
         self.portfolio = None
-        self.booking = None
         self.benchmark_provider = None
         self.benchmark_portfolio = None
         self.calendar_dt = None
@@ -51,7 +55,7 @@ class Environment(object):
         self.plot_store = None
         self.bar_dict = None
         self.user_strategy = None
-        self._frontend_validators = []
+        self._frontend_validators = {}
         self._account_model_dict = {}
         self._position_model_dict = {}
         self._transaction_cost_decider_dict = {}
@@ -99,8 +103,8 @@ class Environment(object):
     def set_broker(self, broker):
         self.broker = broker
 
-    def add_frontend_validator(self, validator):
-        self._frontend_validators.append(validator)
+    def add_frontend_validator(self, validator, validator_type=FRONT_VALIDATOR_TYPE.OTHER):
+        self._frontend_validators.setdefault(validator_type, []).append(validator)
 
     def set_account_model(self, account_type, account_model):
         self._account_model_dict[account_type] = account_model
@@ -118,29 +122,37 @@ class Environment(object):
             raise RuntimeError(_(u"Unknown Account Type {}").format(account_type))
         return self._position_model_dict[account_type]
 
-    def can_submit_order(self, order):
+    def validate_order_submission(self, order):
         if Environment.get_instance().config.extra.is_hold:
             return False
         try:
             account = self.get_account(order.order_book_id)
         except NotImplementedError:
             account = None
-        for v in self._frontend_validators:
-            if not v.can_submit_order(order, account):
-                return False
-        return True
 
-    def can_cancel_order(self, order):
+        for validator_type, validators in iteritems(self._frontend_validators):
+            for v in validators:
+                if not v.can_submit_order(order, account):
+                    return validator_type
+
+    def validate_order_cancellation(self, order):
         if order.is_final():
             return False
         try:
             account = self.get_account(order.order_book_id)
         except NotImplementedError:
             account = None
-        for v in self._frontend_validators:
-            if not v.can_cancel_order(order, account):
-                return False
-        return True
+
+        for validator_type, validators in iteritems(self._frontend_validators):
+            for v in validators:
+                if not v.can_cancel_order(order, account):
+                    return validator_type
+
+    def can_submit_order(self, order):
+        return self.validate_order_submission(order) is None
+
+    def can_cancel_order(self, order):
+        return self.validate_order_cancellation(order) is None
 
     def set_bar_dict(self, bar_dict):
         self.bar_dict = bar_dict
@@ -164,7 +176,7 @@ class Environment(object):
         return self.bar_dict[order_book_id]
 
     def get_last_price(self, order_book_id):
-        return float(self.price_board.get_last_price(order_book_id))
+        return self.data_proxy.get_last_price(order_book_id)
 
     def get_instrument(self, order_book_id):
         return self.data_proxy.instruments(order_book_id)
@@ -174,8 +186,6 @@ class Environment(object):
         return get_account_type(order_book_id)
 
     def get_account(self, order_book_id):
-        if not self.portfolio:
-            raise NotImplementedError
         account_type = get_account_type(order_book_id)
         return self.portfolio.accounts[account_type]
 

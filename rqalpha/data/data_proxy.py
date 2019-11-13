@@ -1,24 +1,26 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright 2017 Ricequant, Inc
+# Copyright 2019 Ricequant, Inc
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# * Commercial Usage: please contact public@ricequant.com
+# * Non-Commercial Usage:
+#     Licensed under the Apache License, Version 2.0 (the "License");
+#     you may not use this file except in compliance with the License.
+#     You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#         http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+#     Unless required by applicable law or agreed to in writing, software
+#     distributed under the License is distributed on an "AS IS" BASIS,
+#     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#     See the License for the specific language governing permissions and
+#     limitations under the License.
 
 import six
 import numpy as np
 import pandas as pd
 
-from rqalpha.data import risk_free_helper
+from rqalpha.utils import risk_free_helper
 from rqalpha.data.instrument_mixin import InstrumentMixin
 from rqalpha.data.trading_dates_mixin import TradingDatesMixin
 from rqalpha.model.bar import BarObject
@@ -28,8 +30,9 @@ from rqalpha.utils.datetime_func import convert_int_to_datetime, convert_date_to
 
 
 class DataProxy(InstrumentMixin, TradingDatesMixin):
-    def __init__(self, data_source):
+    def __init__(self, data_source, price_board):
         self._data_source = data_source
+        self._price_board = price_board
         try:
             self.get_risk_free_rate = data_source.get_risk_free_rate
         except AttributeError:
@@ -81,11 +84,14 @@ class DataProxy(InstrumentMixin, TradingDatesMixin):
             date = self.get_next_trading_date(date)
 
         dt = date.year * 10000 + date.month * 100 + date.day
-        pos = dates.searchsorted(dt)
-        if pos == len(dates) or dt != dates[pos]:
+
+        left_pos = dates.searchsorted(dt)
+        right_pos = dates.searchsorted(dt, side="right")
+
+        if left_pos >= right_pos:
             return None
 
-        return table[pos]
+        return table[left_pos: right_pos]
 
     def get_split_by_ex_date(self, order_book_id, date):
         df = self.get_split(order_book_id)
@@ -239,3 +245,6 @@ class DataProxy(InstrumentMixin, TradingDatesMixin):
     def get_tick_size(self, order_book_id):
         instrument = self.instruments(order_book_id)
         return self._data_source.get_tick_size(instrument)
+
+    def get_last_price(self, order_book_id):
+        return float(self._price_board.get_last_price(order_book_id))

@@ -1,18 +1,20 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright 2017 Ricequant, Inc
+# Copyright 2019 Ricequant, Inc
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# * Commercial Usage: please contact public@ricequant.com
+# * Non-Commercial Usage:
+#     Licensed under the Apache License, Version 2.0 (the "License");
+#     you may not use this file except in compliance with the License.
+#     You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#         http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+#     Unless required by applicable law or agreed to in writing, software
+#     distributed under the License is distributed on an "AS IS" BASIS,
+#     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#     See the License for the specific language governing permissions and
+#     limitations under the License.
 
 import errno
 import sys
@@ -96,7 +98,6 @@ def update_bundle(data_bundle_path, locale):
 @click.option('-rt', '--run-type', 'base__run_type', type=click.Choice(['b', 'p', 'r']), default="b")
 @click.option('-rp', '--round-price', 'base__round_price', is_flag=True)
 @click.option('-mk', '--market', 'base__market', type=click.Choice(['cn', 'hk']), default=None)
-@click.option('--resume', 'base__resume_mode', is_flag=True)
 @click.option('--source-code', 'base__source_code')
 # -- Extra Configuration
 @click.option('-l', '--log-level', 'extra__log_level', type=click.Choice(['verbose', 'debug', 'info', 'error', 'none']))
@@ -109,6 +110,8 @@ def update_bundle(data_bundle_path, locale):
 @click.option('--config', 'config_path', type=click.STRING, help="config file path")
 # -- Mod Configuration
 @click.option('-mc', '--mod-config', 'mod_configs', nargs=2, multiple=True, type=click.STRING, help="mod extra config")
+# for compatible
+@click.option('--resume', 'base__resume_mode', is_flag=True, help="[DEPRECATED] --resume is deprecated")
 def run(**kwargs):
     """
     Start to run a strategy

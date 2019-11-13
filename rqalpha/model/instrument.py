@@ -1,25 +1,27 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright 2017 Ricequant, Inc
+# Copyright 2019 Ricequant, Inc
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# * Commercial Usage: please contact public@ricequant.com
+# * Non-Commercial Usage:
+#     Licensed under the Apache License, Version 2.0 (the "License");
+#     you may not use this file except in compliance with the License.
+#     You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#         http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+#     Unless required by applicable law or agreed to in writing, software
+#     distributed under the License is distributed on an "AS IS" BASIS,
+#     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#     See the License for the specific language governing permissions and
+#     limitations under the License.
+import copy
 import datetime
 
 import numpy as np
 
 from rqalpha.environment import Environment
-from rqalpha.utils import instrument_type_str2enum
+from rqalpha.utils import instrument_type_str2enum, TimeRange, INST_TYPE_IN_STOCK_ACCOUNT
 from rqalpha.utils.repr import property_repr
 
 
@@ -39,7 +41,7 @@ class Instrument(object):
     __repr__ = property_repr
 
     def __init__(self, dic):
-        self.__dict__ = dic
+        self.__dict__ = copy.copy(dic)
 
         if "listed_date" in dic:
             self.__dict__["listed_date"] = self._fix_date(dic["listed_date"], self.DEFAULT_LISTED_DATE)
@@ -109,8 +111,9 @@ class Instrument(object):
     def market_tplus(self):
         """
         [int] 合约卖出和买入操作需要间隔的最小交易日数，如A股为 1
+        公募基金的 market_tplus 默认0
         """
-        return self.__dict__["market_tplus"]
+        return self.__dict__.get("market_tplus") or 0
 
     @property
     def sector_code(self):
@@ -215,24 +218,14 @@ class Instrument(object):
         """
         [float] 合约乘数，例如沪深300股指期货的乘数为300.0（期货专用）
         """
-        try:
-            return self.__dict__["contract_multiplier"]
-        except (KeyError, ValueError):
-            raise AttributeError(
-                "Instrument(order_book_id={}) has no attribute 'contract_multiplier' ".format(self.order_book_id)
-            )
+        return self.__dict__.get("contract_multiplier") or 1
 
     @property
     def margin_rate(self):
         """
         [float] 合约最低保证金率（期货专用）
         """
-        try:
-            return self.__dict__["margin_rate"]
-        except (KeyError, ValueError):
-            raise AttributeError(
-                "Instrument(order_book_id={}) has no attribute 'margin_rate' ".format(self.order_book_id)
-            )
+        return self.__dict__.get("margin_rate") or 1
 
     @property
     def underlying_order_book_id(self):
@@ -290,6 +283,36 @@ class Instrument(object):
 
         now = Environment.get_instance().calendar_dt
         return self.listed_date <= now <= self.de_listed_date
+
+    STOCK_TRADING_PERIOD = [
+        TimeRange(start=datetime.time(9, 31), end=datetime.time(11, 30)),
+        TimeRange(start=datetime.time(13, 1), end=datetime.time(15, 0)),
+    ]
+
+    @property
+    def trading_hours(self):
+        # trading_hours='09:31-11:30,13:01-15:00'
+        try:
+            trading_hours = self.__dict__["trading_hours"]
+        except KeyError:
+            if self.enum_type in INST_TYPE_IN_STOCK_ACCOUNT:
+                return self.STOCK_TRADING_PERIOD
+            return None
+        trading_period = []
+        trading_hours = trading_hours.replace("-", ":")
+        for time_range_str in trading_hours.split(","):
+            start_h, start_m, end_h, end_m = (int(i) for i in time_range_str.split(":"))
+            start, end = datetime.time(start_h, start_m), datetime.time(end_h, end_m)
+            if start > end:
+                trading_period.append(TimeRange(start, datetime.time(23, 59)))
+                trading_period.append(TimeRange(datetime.time(0, 0), end))
+            else:
+                trading_period.append(TimeRange(start, end))
+        return trading_period
+
+    @property
+    def trade_at_night(self):
+        return any(r.start <= datetime.time(4, 0) or r.end >= datetime.time(19, 0) for r in (self.trading_hours or []))
 
     def days_from_listed(self):
         if self.listed_date == self.DEFAULT_LISTED_DATE:

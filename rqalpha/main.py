@@ -1,18 +1,20 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright 2017 Ricequant, Inc
+# Copyright 2019 Ricequant, Inc
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# * Commercial Usage: please contact public@ricequant.com
+# * Non-Commercial Usage:
+#     Licensed under the Apache License, Version 2.0 (the "License");
+#     you may not use this file except in compliance with the License.
+#     You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#         http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+#     Unless required by applicable law or agreed to in writing, software
+#     distributed under the License is distributed on an "AS IS" BASIS,
+#     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#     See the License for the specific language governing permissions and
+#     limitations under the License.
 
 import sys
 import datetime
@@ -30,7 +32,6 @@ from rqalpha.core.strategy import Strategy
 from rqalpha.core.strategy_universe import StrategyUniverse
 from rqalpha.core.global_var import GlobalVars
 from rqalpha.core.strategy_context import StrategyContext
-from rqalpha.data import future_info_cn
 from rqalpha.data.base_data_source import BaseDataSource
 from rqalpha.data.data_proxy import DataProxy
 from rqalpha.environment import Environment
@@ -47,7 +48,6 @@ from rqalpha.utils.i18n import gettext as _
 from rqalpha.utils.persisit_helper import CoreObjectsPersistProxy, PersistHelper
 from rqalpha.utils.scheduler import Scheduler
 from rqalpha.utils.logger import system_log, basic_system_log, user_system_log, user_detail_log
-from rqalpha.utils.dict_func import deep_update
 
 
 jsonpickle_numpy.register_handlers()
@@ -89,6 +89,40 @@ def create_base_scope(copy_scope=False):
     return scope
 
 
+def init_persist_helper(env, scheduler, ucontext, executor, config):
+    if not config.base.persist:
+        return None
+    persist_provider = env.persist_provider
+    if persist_provider is None:
+        raise RuntimeError(_(u"Missing persist provider. You need to set persist_provider before use persist"))
+    persist_helper = PersistHelper(persist_provider, env.event_bus, config.base.persist_mode)
+    env.set_persist_helper(persist_helper)
+    persist_helper.register('core', CoreObjectsPersistProxy(scheduler))
+    persist_helper.register('user_context', ucontext)
+    persist_helper.register('global_vars', env.global_vars)
+    persist_helper.register('universe', env._universe)
+    if isinstance(env.event_source, Persistable):
+        persist_helper.register('event_source', env.event_source)
+    persist_helper.register('portfolio', env.portfolio)
+    for name, module in six.iteritems(env.mod_dict):
+        if isinstance(module, Persistable):
+            persist_helper.register('mod_{}'.format(name), module)
+    # broker will restore open orders from account
+    if isinstance(env.broker, Persistable):
+        persist_helper.register('broker', env.broker)
+    persist_helper.register('executor', executor)
+    return persist_helper
+
+
+def init_strategy_loader(env, source_code, user_funcs, config):
+    if source_code is not None:
+        return SourceCodeStrategyLoader(source_code)
+    elif user_funcs is not None:
+        return UserFuncStrategyLoader(user_funcs)
+    else:
+        return FileStrategyLoader(config.base.strategy_file)
+
+
 def run(config, source_code=None, user_funcs=None):
     env = Environment(config)
     persist_helper = None
@@ -101,26 +135,19 @@ def run(config, source_code=None, user_funcs=None):
         set_loggers(config)
         basic_system_log.debug("\n" + pformat(config.convert_to_dict()))
 
-        if source_code is not None:
-            env.set_strategy_loader(SourceCodeStrategyLoader(source_code))
-        elif user_funcs is not None:
-            env.set_strategy_loader(UserFuncStrategyLoader(user_funcs))
-        else:
-            env.set_strategy_loader(FileStrategyLoader(config.base.strategy_file))
+        env.set_strategy_loader(init_strategy_loader(env, source_code, user_funcs, config))
         env.set_global_vars(GlobalVars())
         mod_handler.set_env(env)
         mod_handler.start_up()
 
-        try:
-            future_info = config.base.future_info
-        except AttributeError:
-            pass
-        else:
-            deep_update(future_info, future_info_cn.CN_FUTURE_INFO)
-
         if not env.data_source:
-            env.set_data_source(BaseDataSource(config.base.data_bundle_path))
-        env.set_data_proxy(DataProxy(env.data_source))
+            env.set_data_source(BaseDataSource(config.base.data_bundle_path, getattr(config.base, "future_info", {})))
+
+        if env.price_board is None:
+            from rqalpha.data.bar_dict_price_board import BarDictPriceBoard
+            env.price_board = BarDictPriceBoard()
+
+        env.set_data_proxy(DataProxy(env.data_source, env.price_board))
 
         Scheduler.set_trading_dates_(env.data_source.get_trading_calendar())
         scheduler = Scheduler(config.base.frequency)
@@ -137,28 +164,15 @@ def run(config, source_code=None, user_funcs=None):
 
         broker = env.broker
         assert broker is not None
-        try:
-            env.portfolio = broker.get_portfolio()
-        except NotImplementedError:
-            pass
-        else:
-            if env.benchmark_provider:
-                env.benchmark_portfolio = BenchmarkPortfolio(env.benchmark_provider, env.portfolio.units)
-
-        try:
-            env.booking = broker.get_booking()
-        except NotImplementedError:
-            pass
+        env.portfolio = broker.get_portfolio()
+        if env.benchmark_provider:
+            env.benchmark_portfolio = BenchmarkPortfolio(env.benchmark_provider, env.portfolio.units)
 
         event_source = env.event_source
         assert event_source is not None
 
         bar_dict = BarMap(env.data_proxy, config.base.frequency)
         env.set_bar_dict(bar_dict)
-
-        if env.price_board is None:
-            from .core.bar_dict_price_board import BarDictPriceBoard
-            env.price_board = BarDictPriceBoard()
 
         ctx = ExecutionContext(const.EXECUTION_PHASE.GLOBAL)
         ctx._push()
@@ -179,12 +193,25 @@ def run(config, source_code=None, user_funcs=None):
             enable_profiler(env, scope)
 
         ucontext = StrategyContext()
-        user_strategy = Strategy(env.event_bus, scope, ucontext)
-        env.user_strategy = user_strategy
         scheduler.set_user_context(ucontext)
 
-        if not config.extra.force_run_init_when_pt_resume:
-            with run_with_user_log_disabled(disabled=config.base.resume_mode):
+        from .core.executor import Executor
+        executor = Executor(env)
+
+        persist_helper = init_persist_helper(env, scheduler, ucontext, executor, config)
+
+        if persist_helper:
+            should_resume = persist_helper.should_resume()
+            should_run_init = persist_helper.should_run_init()
+        else:
+            should_resume = False
+            should_run_init = True
+
+        user_strategy = Strategy(env.event_bus, scope, ucontext, should_run_init)
+        env.user_strategy = user_strategy
+
+        if (should_resume and not should_run_init) or not should_resume:
+            with run_with_user_log_disabled(disabled=should_resume):
                 user_strategy.init()
 
         if config.extra.context_vars:
@@ -193,57 +220,28 @@ def run(config, source_code=None, user_funcs=None):
                     v = v.__dict__
                 setattr(ucontext, k, v)
 
-        from .core.executor import Executor
-        executor = Executor(env)
-
-        if config.base.persist:
-            persist_provider = env.persist_provider
-            if persist_provider is None:
-                raise RuntimeError(_(u"Missing persist provider. You need to set persist_provider before use persist"))
-            persist_helper = PersistHelper(persist_provider, env.event_bus, config.base.persist_mode)
-            env.set_persist_helper(persist_helper)
-            persist_helper.register('core', CoreObjectsPersistProxy(scheduler))
-            persist_helper.register('user_context', ucontext)
-            persist_helper.register('global_vars', env.global_vars)
-            persist_helper.register('universe', env._universe)
-            if isinstance(event_source, Persistable):
-                persist_helper.register('event_source', event_source)
-            if env.portfolio:
-                persist_helper.register('portfolio', env.portfolio)
-            for name, module in six.iteritems(env.mod_dict):
-                if isinstance(module, Persistable):
-                    persist_helper.register('mod_{}'.format(name), module)
-            # broker will restore open orders from account
-            if isinstance(broker, Persistable):
-                persist_helper.register('broker', broker)
-            persist_helper.register('executor', executor)
-
+        if persist_helper:
             env.event_bus.publish_event(Event(EVENT.BEFORE_SYSTEM_RESTORED))
-            persist_helper.restore()
+            env.event_bus.publish_event(Event(EVENT.DO_RESTORE))
             env.event_bus.publish_event(Event(EVENT.POST_SYSTEM_RESTORED))
 
         init_succeed = True
 
-        # When force_run_init_when_pt_resume is active,
-        # we should run `init` after restore persist data
-        if config.extra.force_run_init_when_pt_resume:
-            assert config.base.resume_mode == True
-            with run_with_user_log_disabled(disabled=False):
-                env._universe._set = set()
-                user_strategy.init()
+        if should_resume and should_run_init:
+            user_strategy.init()
 
         executor.run(bar_dict)
 
         if env.profile_deco:
             output_profile_result(env)
     except CustomException as e:
-        if init_succeed and env.config.base.persist and persist_helper and env.config.base.persist_mode == const.PERSIST_MODE.ON_CRASH:
+        if init_succeed and persist_helper and env.config.base.persist_mode == const.PERSIST_MODE.ON_CRASH:
             persist_helper.persist()
 
         code = _exception_handler(e)
         mod_handler.tear_down(code, e)
     except Exception as e:
-        if init_succeed and env.config.base.persist and persist_helper and env.config.base.persist_mode == const.PERSIST_MODE.ON_CRASH:
+        if init_succeed and persist_helper and env.config.base.persist_mode == const.PERSIST_MODE.ON_CRASH:
             persist_helper.persist()
 
         exc_type, exc_val, exc_tb = sys.exc_info()
@@ -252,7 +250,7 @@ def run(config, source_code=None, user_funcs=None):
         code = _exception_handler(user_exc)
         mod_handler.tear_down(code, user_exc)
     else:
-        if (env.config.base.persist and persist_helper and env.config.base.persist_mode == const.PERSIST_MODE.ON_NORMAL_EXIT):
+        if persist_helper and env.config.base.persist_mode == const.PERSIST_MODE.ON_NORMAL_EXIT:
             persist_helper.persist()
         result = mod_handler.tear_down(const.EXIT_CODE.EXIT_SUCCESS)
         system_log.debug(_(u"strategy run successfully, normal exit"))
